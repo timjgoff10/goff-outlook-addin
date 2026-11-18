@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en-GB"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Goff Planner</title>
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<style>
+body{font:14px -apple-system,Segoe UI,sans-serif;margin:0;padding:14px;color:#1f2937}
+h1{font-size:15px;margin:0 0 8px}
+.sub{font-size:12px;color:#6b7280;margin:2px 0 10px;word-break:break-word}
+select,input{font:inherit;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;width:100%;box-sizing:border-box}
+button{font:inherit;font-weight:600;padding:9px 14px;border:0;border-radius:8px;background:#2563eb;color:#fff;cursor:pointer;width:100%;margin-top:10px}
+button[disabled]{opacity:.55;cursor:default}
+button.sec{background:transparent;color:#2563eb;border:1px solid #cbd5e1;font-weight:400;padding:5px 10px;margin-top:6px}
+#msg{margin-top:10px;font-size:13px;min-height:18px}
+.ok{color:#15803d}.err{color:#b91c1c}
+label{font-size:12px;color:#475569;display:block;margin-top:8px}
+</style></head><body>
+<h1>✉ Send to Goff Planner</h1>
+<div class="sub" id="what">Reading the email…</div>
+<div id="main" style="display:none">
+  <label for="due">Due</label>
+  <select id="due"><option value="today">Today</option><option value="tomorrow">Tomorrow</option><option value="friday">This Friday</option><option value="monday">Next Monday</option></select>
+  <button id="go" disabled>Add to planner</button>
+  <button class="sec" id="reset" style="display:none">Change setup code</button>
+</div>
+<div id="setup" style="display:none">
+  <div class="sub">First time only: in the planner open Workflow inbox and press <b>✉ Outlook add-in code</b>, then paste it here.</div>
+  <input id="code" placeholder="Paste the setup code">
+  <button id="save">Save code</button>
+</div>
+<div id="msg"></div>
+<script>
+// Pure helpers (also unit-tested from the planner project).
+function oaIso(d){return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);}
+function oaDue(kind,now){var d=new Date(now.getFullYear(),now.getMonth(),now.getDate()),dow=d.getDay();
+  if(kind==='tomorrow')d.setDate(d.getDate()+1);
+  else if(kind==='friday')d.setDate(d.getDate()+((5-dow+7)%7));
+  else if(kind==='monday')d.setDate(d.getDate()+((8-dow)%7||7));
+  return oaIso(d);}
+function oaLink(restId){return 'https://outlook.office365.com/owa/?ItemID='+encodeURIComponent(restId)+'&exvsurl=1&viewmodel=ReadMessageItem';}
+function oaParseCode(c){var m=/^\s*(https:\/\/script\.google\.com\/\S+?)\s*\|\s*([A-Za-z0-9]{20,})\s*$/.exec(String(c||''));return m?{url:m[1],secret:m[2]}:null;}
+
+var item=null,link='',msgId='',sender='';
+function $(i){return document.getElementById(i);}
+function say(t,cls){var m=$('msg');m.textContent=t;m.className=cls||'';}
+function getCfg(){try{return oaParseCode(localStorage.getItem('gpOaCode'));}catch(e){return null;}}
+function show(){var c=getCfg();$('setup').style.display=c?'none':'block';$('main').style.display=c?'block':'none';$('reset').style.display=c?'inline-block':'none';$('go').disabled=!(c&&item);}
+Office.onReady(function(){
+  item=Office.context.mailbox.item;
+  if(!item){$('what').textContent='Open an email first.';return;}
+  var from=item.from||{};sender=(from.displayName||'')+(from.emailAddress?' <'+from.emailAddress+'>':'');
+  $('what').textContent=(item.subject||'(no subject)')+(sender?'  -  '+sender:'');
+  try{var rid=Office.context.mailbox.convertToRestId(item.itemId,Office.MailboxEnums.RestVersion.v2_0);link=oaLink(rid);}catch(e){link=oaLink(item.itemId);}
+  msgId=item.internetMessageId||item.itemId||'';
+  show();
+});
+$('save').onclick=function(){var c=oaParseCode($('code').value);if(!c){say('That code does not look right - copy it again from the planner.','err');return;}
+  try{localStorage.setItem('gpOaCode',$('code').value.trim());}catch(e){say('Could not save the code in this pane.','err');return;}
+  say('Saved.','ok');show();};
+$('reset').onclick=function(){try{localStorage.removeItem('gpOaCode');}catch(e){}$('code').value='';say('');show();};
+$('go').onclick=function(){
+  var c=getCfg();if(!c||!item)return;$('go').disabled=true;say('Sending…');
+  var body={mode:'outlookTodo',secret:c.secret,subject:item.subject||'',sender:sender,link:link,msgId:msgId,due:oaDue($('due').value,new Date())};
+  fetch(c.url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(body)})
+    .then(function(r){return r.json();})
+    .then(function(r){if(r&&r.ok){say('✓ '+(r.message||'Added to the planner'),'ok');}else{say('✗ '+((r&&r.error)||'Not added'),'err');$('go').disabled=false;}})
+    .catch(function(e){say('✗ Could not reach the planner: '+((e&&e.message)||e),'err');$('go').disabled=false;});
+};
+</script></body></html>
